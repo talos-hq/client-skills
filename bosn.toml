@@ -1,0 +1,55 @@
+# Container targets for the consent-gated sudo e2e suite.
+#
+#   bosn run --task e2e-ubuntu
+#   bosn run --task e2e-arch
+#   bosn run --task e2e-all
+#
+# The checkout is mounted read-only at /repo; the suite writes only to /tmp,
+# /home/agent, /etc, /usr/local and /var. `uv run --no-project` is the entry
+# point on every stack; UV_PYTHON keeps it on the distro's python3 so the
+# unprivileged phase can execute the same interpreter.
+
+[stack.ubuntu]
+dockerfile = "bosn/ubuntu.Dockerfile"
+default = true
+workdir = "/repo"
+
+[stack.ubuntu.mounts]
+repo = { source = ".", destination = "/repo", readonly = true }
+
+[stack.ubuntu.volumes]
+uv-cache = { scope = "machine", destination = "/root/.cache/uv" }
+
+[stack.ubuntu.env]
+UV_PYTHON = "/usr/bin/python3"
+UV_CACHE_DIR = "/root/.cache/uv"
+
+[stack.arch]
+dockerfile = "bosn/arch.Dockerfile"
+workdir = "/repo"
+
+[stack.arch.mounts]
+repo = { source = ".", destination = "/repo", readonly = true }
+
+[stack.arch.volumes]
+uv-cache = { scope = "machine", destination = "/root/.cache/uv" }
+
+[stack.arch.env]
+UV_PYTHON = "/usr/bin/python3"
+UV_CACHE_DIR = "/root/.cache/uv"
+
+[task.e2e-ubuntu]
+stack = "ubuntu"
+cmd = "uv run --no-project /repo/tests/e2e/test_consent_sudo.py"
+
+[task.e2e-arch]
+stack = "arch"
+cmd = "uv run --no-project /repo/tests/e2e/test_consent_sudo.py"
+
+# Every assertion this stack can support, plus the repo's own skill gate.
+# Anything a distro cannot support prints `SKIP <check> [reason: ...]` instead
+# of passing silently; a failure exits non-zero. Arch is its own task because
+# one container cannot host another — run e2e-arch for that stack.
+[task.e2e-all]
+stack = "ubuntu"
+cmd = "uv run --no-project /repo/tests/e2e/test_consent_sudo.py && uv run --no-project /repo/scripts/validate_skills.py --strict"
