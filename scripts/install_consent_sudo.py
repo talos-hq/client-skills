@@ -52,13 +52,15 @@ have written (run the installer on a non-NixOS host to obtain it):
   security.sudo.extraRules = [{
     users = [ "%(agent)s" ];
     commands = [{
-      command = "/run/current-system/sw/libexec/hermes-consent-exec";
+      command = "/run/current-system/sw/bin/hermes-consent-exec";
       options = [ "NOPASSWD" ];
     }];
   }];
 
-Then rebuild (sudo nixos-rebuild switch) and install the helper plus
-/etc/hermes-consent/config.json by hand.
+Do not hand-write this: the repository ships a tested module that declares the
+rule, the helper, /etc/hermes-consent/config.json and the state/log tmpfiles —
+`nix/consent-sudo.nix`. Import it, set its options, and rebuild
+(`sudo nixos-rebuild switch`).
 """
 
 
