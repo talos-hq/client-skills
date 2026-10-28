@@ -1,0 +1,22 @@
+# Tool configuration only: this repo is a collection of scripts, not a package.
+# CI and the README pin the tools themselves (ruff 0.12.10, basedpyright 1.40.2).
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+extend-exclude = ["tests/e2e/fixtures"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+# Pre-existing gate script: leave its formatting alone in unrelated PRs.
+"scripts/validate_skills.py" = ["E501"]
+
+[tool.basedpyright]
+typeCheckingMode = "basic"
+pythonVersion = "3.11"
+include = ["scripts", "tests"]
+exclude = ["**/.venv", "**/__pycache__"]
+reportMissingTypeStubs = false
+reportUnusedImport = true
