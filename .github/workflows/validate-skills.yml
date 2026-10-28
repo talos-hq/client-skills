@@ -1,0 +1,29 @@
+name: Validate skills
+
+on:
+  push:
+    branches: [main]
+    paths: ["skills/**", "scripts/validate_skills.py", ".github/workflows/validate-skills.yml"]
+  pull_request:
+    paths: ["skills/**", "scripts/validate_skills.py", ".github/workflows/validate-skills.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-skills-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: validate skills
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+      - name: Validate every skill
+        run: uv run --no-project scripts/validate_skills.py --strict
