@@ -16,6 +16,26 @@ A skill whose `SKILL.md` lives on a tag or branch can also be installed by URL:
 hermes skills install https://raw.githubusercontent.com/talos-hq/client-skills/main/skills/<skill-name>/SKILL.md
 ```
 
+### Skills that touch sudo cannot come through the hub
+
+The hub installer runs a security scan that flags any skill containing sudo
+invocations, `NOPASSWD` rules or sudoers edits — by design, since a prompt
+injected into a skill must not be able to hand itself root. `hermes-sudo-consent`
+is exactly that class, so the hub refuses it with a list of high-risk findings
+and no `--force` overrides that.
+
+Install it from a checkout instead:
+
+```bash
+git clone --depth 1 https://github.com/talos-hq/client-skills
+mkdir -p ~/.hermes/skills/client
+cp -r client-skills/skills/hermes-sudo-consent ~/.hermes/skills/client/
+```
+
+It loads from the profile's own `skills/` tree on the next session. This is a
+deliberate trade: the capability is powerful enough that the human running it
+should have the repository in front of them, rather than a one-line install.
+
 Clients pin by tagging: a skill's frontmatter `version` and the repo tag must agree (see *Versioning* below).
 
 ## Layout
