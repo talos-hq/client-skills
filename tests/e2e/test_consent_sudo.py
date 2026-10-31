@@ -12,8 +12,9 @@ or directly against a disposable host as root:
 
 Two phases, because the audit log is root-only by design:
 
-* ``agent`` — runs as the unprivileged user: installs, requests, approves,
-  runs, and checks the denials. It can never read the audit log.
+* ``agent`` — runs as the unprivileged user: installs, requests, writes the
+  gateway's approval file, runs, and checks the denials. It can never read
+  the audit log.
 * ``audit`` — runs as root afterwards and reads /var/log/hermes-consent.log.
 
 Everything is real: the real installer, the real sudoers rule, real sudo. No
@@ -23,12 +24,14 @@ check is relaxed to make a case pass; a failure exits non-zero.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -135,26 +138,37 @@ def request(checks: Checks, *command: str, reason: str = "e2e: prove the path") 
     return approval_id
 
 
-def approve(
+def gateway_approve(
     checks: Checks, approval_id: str, telegram_user_id: int, label: str
 ) -> None:
-    completed = run(
-        [
-            sys.executable,
-            str(AGENT_CLI),
-            "approve",
-            approval_id,
-            "--telegram-user-id",
-            str(telegram_user_id),
-            "--update-id",
-            "7001",
-            "--message-id",
-            "88",
-        ]
+    """Write ``<id>.approved`` the way the Hermes gateway does after a tap.
+
+    The agent CLI has no ``approve`` command any more; the gateway owns this
+    file. Same keys, same 0600 mode, same atomic replace.
+    """
+    directory = AGENT_HOME / ".hermes" / "consent"
+    request_record = json.loads(
+        (directory / f"{approval_id}.json").read_text(encoding="utf-8")
     )
-    checks.check(
-        f"approval recorded ({label})", completed.returncode == 0, short(completed)
-    )
+    command = [str(item) for item in request_record["argv"]]
+    payload = {
+        "id": approval_id,
+        "approver_telegram_user_id": telegram_user_id,
+        "update_id": 7001,
+        "message_id": 88,
+        "approved_at": datetime.now(UTC).isoformat(timespec="seconds"),
+        "argv_sha256": hashlib.sha256(
+            b"\0".join(arg.encode("utf-8") for arg in command)
+        ).hexdigest(),
+    }
+    target = directory / f"{approval_id}.approved"
+    temporary = target.with_name(f".{target.name}.tmp")
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    os.replace(temporary, target)
+    mode = target.stat().st_mode & 0o777
+    checks.check(f"gateway approval recorded ({label})", mode == 0o600, oct(mode))
 
 
 def run_helper(approval_id: str) -> subprocess.CompletedProcess[str]:
@@ -242,9 +256,44 @@ def agent_phase() -> int:
         short(not_yet),
     )
 
+    print("\n== the agent CLI cannot approve ==")
+    forged = request(checks, "/usr/bin/id", "-u", reason="e2e: forge attempt")
+    attempt = run(
+        [
+            sys.executable,
+            str(AGENT_CLI),
+            "approve",
+            forged,
+            "--telegram-user-id",
+            str(TELEGRAM_USER_ID),
+            "--update-id",
+            "7001",
+            "--message-id",
+            "88",
+        ]
+    )
+    consent = AGENT_HOME / ".hermes" / "consent"
+    checks.check(
+        "`approve` subcommand no longer exists",
+        attempt.returncode != 0 and "unknown command 'approve'" in attempt.stderr,
+        short(attempt),
+    )
+    checks.check(
+        "failed `approve` wrote no approval or denial",
+        not (consent / f"{forged}.approved").exists()
+        and not (consent / f"{forged}.denied").exists(),
+        str(consent),
+    )
+    forged_run = run_helper(forged)
+    checks.check(
+        "request after failed `approve` still refused",
+        forged_run.returncode != 0 and "no_approval" in forged_run.stderr,
+        short(forged_run),
+    )
+
     print("\n== d. the wrong Telegram user cannot approve ==")
     wrong = request(checks, "/usr/bin/id", "-u", reason="e2e: wrong approver")
-    approve(checks, wrong, WRONG_TELEGRAM_USER_ID, "wrong telegram user")
+    gateway_approve(checks, wrong, WRONG_TELEGRAM_USER_ID, "wrong telegram user")
     rejected = run_helper(wrong)
     checks.check(
         "approval by another telegram user refused",
@@ -254,7 +303,7 @@ def agent_phase() -> int:
 
     print("\n== f. a correct approval runs exactly once ==")
     approved_id = request(checks, "/usr/bin/id", "-u", reason="e2e: approved argv")
-    approve(checks, approved_id, TELEGRAM_USER_ID, "configured telegram user")
+    gateway_approve(checks, approved_id, TELEGRAM_USER_ID, "configured telegram user")
     executed = run_helper(approved_id)
     checks.check(
         "approved argv runs as root (id -u prints 0)",
@@ -270,7 +319,7 @@ def agent_phase() -> int:
 
     print("\n== argv binding ==")
     bound = request(checks, "/usr/bin/id", "-u", reason="e2e: tamper the request")
-    approve(checks, bound, TELEGRAM_USER_ID, "then tamper")
+    gateway_approve(checks, bound, TELEGRAM_USER_ID, "then tamper")
     request_path = AGENT_HOME / ".hermes" / "consent" / f"{bound}.json"
     tampered = json.loads(request_path.read_text(encoding="utf-8"))
     tampered["argv"] = ["/usr/bin/id"]
@@ -283,7 +332,7 @@ def agent_phase() -> int:
     )
 
     swapped = request(checks, "/usr/bin/id", "-u", reason="e2e: swap the approval")
-    approve(checks, swapped, TELEGRAM_USER_ID, "then swap the hash")
+    gateway_approve(checks, swapped, TELEGRAM_USER_ID, "then swap the hash")
     approval_path = AGENT_HOME / ".hermes" / "consent" / f"{swapped}.approved"
     record = json.loads(approval_path.read_text(encoding="utf-8"))
     record["argv_sha256"] = "0" * 64
@@ -298,7 +347,7 @@ def agent_phase() -> int:
     print("\n== e. expired approvals are refused ==")
     install(checks, "--ttl-minutes", "0")
     stale = request(checks, "/usr/bin/id", "-u", reason="e2e: ttl 0")
-    approve(checks, stale, TELEGRAM_USER_ID, "already expired")
+    gateway_approve(checks, stale, TELEGRAM_USER_ID, "already expired")
     expired = run_helper(stale)
     checks.check(
         "expired approval refused",

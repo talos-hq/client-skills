@@ -1,7 +1,7 @@
 ---
 name: hermes-sudo-consent
 description: "Use when a fix needs root. Get a human tap, then escalate."
-version: 0.1.0
+version: 0.2.0
 author: Talos HQ
 license: MIT
 platforms: [linux]
@@ -47,14 +47,9 @@ Runs one root command, once, only after the human taps approve in Telegram — a
 
 2. **Ask the human with the `clarify` tool.** One message, four lines: the exact command, what it changes, the blast radius, the rollback. Offer approve/deny buttons. Do not paraphrase the command — quote the bytes you requested.
 
-3. **Wait for the tap.** Only after an explicit tap from the *configured* Telegram user does the gateway record approval:
+3. **Wait for the tap.** The gateway records approval from the tap; you never write it. Only after an explicit tap from the *configured* Telegram user does the Hermes gateway write `~/.hermes/consent/<id>.approved` itself. Poll `status <id>` until `"approved": true`, or stop if the human denies.
 
-   ```bash
-   uv run --no-project scripts/hermes_consent_agent.py approve <id> \
-     --telegram-user-id <approver> --update-id <update> --message-id <message>
-   ```
-
-   **This is the gateway's command, not yours.** An agent that calls `approve` itself is escalating without consent; nothing downstream can tell the difference (see *Limitations*).
+   **Recording approval is the gateway's job, not yours.** The old `hermes_consent_agent.py approve` command no longer exists — invoking it fails with `unknown command 'approve'`. Do not try to write `<id>.approved` (or `<id>.denied`) by any other means: that is escalating without consent (see *Limitations*).
 
 4. **Run it.** `uv run --no-project scripts/hermes_consent_agent.py run <id>` shells out to `sudo -n … hermes-consent-exec run <id>`. Exit 0 means the approved argv ran as root and printed its output. Non-zero means refused — read the `denied (<code>)` line: `no_approval`, `approver_mismatch`, `expired`, `replay`, `argv_hash_mismatch`, `request_tampered`.
 
@@ -94,10 +89,11 @@ uv run --no-project scripts/hermes_consent_agent.py run <id>    # must now FAIL:
 
 This stops **prompt injection and silent escalation**: an injected instruction cannot produce a root command without a human tap, and every attempt is logged.
 
-It does **not** stop a fully compromised gateway process. The approval record is written by a user-level process running as the same user as the agent, into a directory that user can write. A process that can call `approve` can mint an approval; the helper verifies *what* was approved and *who* the approver claims to be, not that a human actually tapped. Closing that gap needs the approval and the execution to live in different privilege domains (a separate root-side approval agent, or a hardware token), which this design deliberately does not attempt. Treat a host where the agent and gateway share a uid as "consent is advisory against accidents and injection, not against a compromised host".
+The agent CLI has no way to write an approval: there is no `approve` command, so a stray or misbehaving agent CLI call cannot mint one. The remaining risk is a **compromised gateway process** (or any code running as that uid). The approval record is written by the user-level gateway, running as the same user as the agent, into a directory that user can write. Such a process can mint an approval; the helper verifies *what* was approved and *who* the approver claims to be, not that a human actually tapped. Closing that gap needs the approval and the execution to live in different privilege domains (a separate root-side approval agent, or a hardware token), which this design deliberately does not attempt. Treat a host where the agent and gateway share a uid as "consent is advisory against accidents and injection, not against a compromised host".
 
 Also out of scope: the audit log is append-only by convention, not tamper-evident against root; and root can edit the helper.
 
 ## Changelog
 
+- 0.2.0 — removed the agent CLI `approve` command; the Hermes gateway now writes `<id>.approved` itself from the Telegram tap.
 - 0.1.0 — initial: installer, root helper, agent CLI, audit log, NixOS module.

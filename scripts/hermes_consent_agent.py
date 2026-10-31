@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """Agent-side CLI for consent-gated sudo.
 
-The agent uses three commands:
+Commands:
 
     hermes_consent_agent.py request --reason "graphics driver is wedged" -- id -u
     hermes_consent_agent.py run <id>
     hermes_consent_agent.py status <id>
+    hermes_consent_agent.py list
 
-``approve`` exists for the *human-approval step* — the gateway, after the
-person taps the Telegram button. It is not an agent command: an agent that
-calls ``approve`` itself is escalating without consent, and the record it
-writes is indistinguishable from a real one (see the skill's Limitations).
+There is no ``approve`` command. The Hermes gateway writes
+``~/.hermes/consent/<id>.approved`` itself when the configured person taps the
+Telegram button; this CLI never writes ``<id>.approved`` or ``<id>.denied``.
 The root helper treats the approval file as untrusted input and checks the
 approver id, the TTL and the argv hash regardless.
 
@@ -132,41 +132,10 @@ def command_request(argv: list[str]) -> int:
     return 0
 
 
-def command_approve(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(
-        prog="hermes_consent_agent.py approve",
-        description="Record a human's Telegram tap (gateway, not the agent).",
-    )
-    parser.add_argument("approval_id")
-    parser.add_argument("--telegram-user-id", type=int, required=True)
-    parser.add_argument("--update-id", type=int, required=True)
-    parser.add_argument("--message-id", type=int, required=True)
-    args = parser.parse_args(argv)
-
-    problem = check_id(args.approval_id)
-    if problem:
-        return fail(problem)
-    directory = consent_dir()
-    request = read_json(directory / f"{args.approval_id}.json")
-    if request is None:
-        return fail(f"no request {args.approval_id}; run `request` first")
-    command = request.get("argv")
-    if not isinstance(command, list) or not all(
-        isinstance(item, str) for item in command
-    ):
-        return fail("request is malformed; make a new one")
-
-    payload: dict[str, Any] = {
-        "id": args.approval_id,
-        "approver_telegram_user_id": args.telegram_user_id,
-        "update_id": args.update_id,
-        "message_id": args.message_id,
-        "approved_at": now_iso(),
-        "argv_sha256": argv_digest([str(item) for item in command]),
-    }
-    write_json(directory / f"{args.approval_id}.approved", payload)
-    print(f"approved {args.approval_id} by telegram user {args.telegram_user_id}")
-    return 0
+# There is deliberately no ``approve`` handler. The gateway records the
+# human's Telegram tap as ``<id>.approved`` itself; this CLI must never be able
+# to write ``<id>.approved`` or ``<id>.denied``, so an agent has no convenient
+# primitive for minting its own consent.
 
 
 def command_run(argv: list[str]) -> int:
@@ -269,7 +238,6 @@ def main(argv: list[str]) -> int:
         return 2
     handlers = {
         "request": command_request,
-        "approve": command_approve,
         "run": command_run,
         "status": command_status,
         "list": command_list,
