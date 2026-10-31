@@ -159,9 +159,10 @@ nix build .#checks.x86_64-linux.consent-sudo
 ```
 
 **Limitation, stated plainly:** this stops prompt injection and silent
-escalation. It does **not** stop a fully compromised gateway process — the
-approval record is written by a user-level process running as the same user as
-the agent, so a process that can call `approve` can mint an approval. See the
+escalation. The agent CLI has no `approve` command; the Hermes gateway writes
+the approval record itself from the Telegram tap. It does **not** stop a fully
+compromised gateway process — that record is written by a user-level process
+running as the same user as the agent, so a compromised gateway can mint one. See the
 skill's *Limitations* section.
 
 ## Versioning
